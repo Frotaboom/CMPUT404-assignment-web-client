@@ -134,8 +134,6 @@ class HTTPClient(object):
             request += "Content-Length: 0\r\n"
         request += '\r\n'
 
-        print(request)
-
         self.sendall(request)
 
         receivedMessage = self.recvall(self.socket)
