@@ -48,14 +48,24 @@ class HTTPClient(object):
 
     def get_code(self, data):
         #assumes that code is the 2nd thing in the first line of data, which is separated by '\r\n'
-        return data.split('\r\n')[0].split(' ')[1]
+        #return int(data.split('\r\n')[0].split(' ')[1])
+        splits = data.split('\r\n')
+        if len(splits) > 0:
+            newSplits = splits[0].split(' ')
+            if len(newSplits) > 1:
+                return int(newSplits[1])
+        return 400
 
     def get_headers(self,data):
         #assumes that headers are are the 2nd line of data -> line before body
         return '\r\n'.join(data.split('\r\n\r\n')[0].split('\r\n')[1:])
 
     def get_body(self, data):
-        return data.split('\r\n\r\n')[1]
+        #return data.split('\r\n\r\n')[1]
+        splits = data.split('\r\n\r\n')
+        if len(splits) > 1:
+            return splits[1]
+        return ''
     
     def sendall(self, data):
         self.socket.sendall(data.encode('utf-8'))
@@ -75,26 +85,72 @@ class HTTPClient(object):
                 done = not part
         return buffer.decode('utf-8')
 
+    def parse_url(self, url):
+        info = {"path" : None, "port": None, "hostname" : None}
+        parsed = urllib.parse.urlparse(url)#has path, port, and hostname
+        if not parsed.path:
+            info["path"] = "/"
+        else:
+            info["path"] = parsed.path
+
+        if not parsed.port:
+            info["port"] = 80
+        else:
+            info["port"] = parsed.port
+
+        if not parsed.hostname:
+            info["hostname"] = parsed.path
+            info["path"] = "/"
+        else:
+            info["hostname"] = parsed.hostname
+
+        return info          
+
     def GET(self, url, args=None):
-        parsed = urllib.parse.urlparse(url) #contains path, port, and hostname
-        print(f'GET {parsed.path} HTTP/1.0\r\nHost: {parsed.hostname}:{parsed.port}\r\n\r\n')
-        self.connect(url, self.port)
-        self.sendall(f'GET {parsed.path} HTTP/1.0\r\nHost: {parsed.hostname}:{parsed.port}\r\n\r\n')
+        info = self.parse_url(url)
+        self.connect(info["hostname"], info["port"])
+
+        request = f'GET {info["path"]} HTTP/1.0\r\nHost: {info["hostname"]}:{info["port"]}\r\nConnection: Close\r\n\r\n'
+
+        self.sendall(request)
+
         receivedMessage = self.recvall(self.socket)
         self.close()
+
         code = self.get_code(receivedMessage)
         body = self.get_body(receivedMessage)
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
-        self.connect(url, self.port)
-        self.sendall(f'POST / HTTP/1.0\r\nHost: {url}\r\n\r\n')
+        info = self.parse_url(url)
+        self.connect(info["hostname"], info["port"])
+        request = f'POST {info["path"]} HTTP/1.0\r\nHost: {info["hostname"]}:{info["port"]}\r\nConnection: Close\r\n'
+        if args:
+            assembledArgs = self.assemble_args(args)
+            request += "Content-Type: application/x-www-form-urlencoded\r\n"
+            request += f'Content-Length: {len(assembledArgs.encode("utf-8"))}\r\n\r\n'
+            request += assembledArgs + '\r\n'
+        else:
+            request += "Content-Length: 0\r\n"
+        request += '\r\n'
+
+        print(request)
+
+        self.sendall(request)
+
         receivedMessage = self.recvall(self.socket)
-        print(receivedMessage)
         self.close()
+
         code = self.get_code(receivedMessage)
         body = self.get_body(receivedMessage)
         return HTTPResponse(code, body)
+
+    def assemble_args(self, args):
+        assembledArgs = ""
+        for key, val in args.items():
+            assembledArgs += key + '=' + val + '&'
+        return assembledArgs[0:len(assembledArgs)-1]
+
 
     def command(self, url, command="GET", args=None):
         if (command == "POST"):
